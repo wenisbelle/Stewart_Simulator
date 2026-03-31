@@ -1,5 +1,7 @@
 import numpy as np
 from scipy import signal
+from scipy.spatial.transform import Rotation
+
 
 
 class Washout:
@@ -121,6 +123,16 @@ class Washout:
             [x, y, z, roll, pitch, yaw] platform pose commands.
             Translations in metres, rotations in radians.
         """
+        x_cmd     = 0.0
+        y_cmd     = 0.0
+        z_cmd     = 0.0
+        roll_cmd  = 0.0
+        pitch_cmd = 0.0
+        yaw_cmd   = 0.0
+
+        R = Rotation.from_euler('xyz', [roll_cmd, pitch_cmd, yaw_cmd]).as_matrix()
+
+
         linear_accelerations = np.asarray(linear_accelerations)  # (3, N)
         angular_velocities   = np.asarray(angular_velocities)    # (3, N)
 

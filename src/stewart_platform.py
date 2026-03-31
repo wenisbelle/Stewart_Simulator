@@ -15,7 +15,7 @@ class StewartPlatform:
         self.top_anchors = np.array(top_anchors)
 
         # State variables
-        self.current_pose = [0, 0, 0, 0, 0, 0]# [x, y, z, roll, pitch, yaw]
+        self.current_pose = [0, 0, 0, 0, 0, 0]  # [x, y, z, roll, pitch, yaw]
         self.target_pose =  [0, 0, 0, 0, 0, 0]  # [x, y, z, roll, pitch, yaw]
 
         # Actuator lengths
@@ -23,8 +23,8 @@ class StewartPlatform:
         self.target_lengths = np.copy(self.current_lengths)
 
         # Actuator limits
-        self.actuator_minimum_lengths = 0.15 * np.ones(6)
-        self.actuator_maximum_lengths = 3.0  * np.ones(6)   
+        self.actuator_minimum_lengths = 0.75 * np.ones(6)
+        self.actuator_maximum_lengths = 1.35  * np.ones(6)   
 
         # PID Controller states
         self.kp = kp

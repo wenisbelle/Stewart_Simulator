@@ -115,4 +115,6 @@ class VestibularSystem:
             filtered = self._apply_threshold(filtered, self.thresholds[3 + i])
             ang_system_output.append(filtered)
 
-        return [accel_system_output, ang_system_output]
+        return accel_system_output, ang_system_output
+    
+    

@@ -1,6 +1,8 @@
 import numpy as np
 import time
 import matplotlib.pyplot as plt
+from scipy.optimize import least_squares
+from scipy.spatial.transform import Rotation
 from washout import Washout
 from stewart_platform import StewartPlatform, ThreadedSimulator
 from vestibular_system import VestibularSystem
@@ -164,17 +166,58 @@ def make_platform(kp=20.0, ki=1.0, kd=0.0):
     Top plate radius = 1.5 m, base plate radius = 1.75 m.
     Anchors are placed at angles 0°, 60°, 120°, 180°, 240°, 300°.
     """
-    rp = 1.5
-    rb = 1.75
-    h  = 0.35    # nominal platform height (m)
+    initial_lengths = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+    assert initial_lengths.shape == (6,)
 
-    base_angles = np.radians([10, 50, 130, 170, 250, 290])
-    top_angles  = np.radians([350, 70, 110, 190, 230, 310])
+    rp = 1.5
+    rb = 1.4 * np.sqrt(3) / 3
+
+    base_angles = np.radians([25,  35,  175, 185, 325, 335])
+    #delta = np.radians(30)  
+    #top_angles = base_angles + delta
+    top_angles = np.radians([5,  55,  155, 205, 305, 355])
 
     top_anchors  = np.array([[rp * np.cos(a), rp * np.sin(a), 0.0] for a in top_angles])
-    base_anchors = np.array([[rb * np.cos(a), rb * np.sin(a), -h] for a in base_angles])
 
-    return StewartPlatform(base_anchors, top_anchors, kp=kp, ki=ki, kd=kd)
+    xy_deltas = np.array([
+        top_anchors[i, :2] - np.array([rb * np.cos(base_angles[i]),
+                                        rb * np.sin(base_angles[i])])
+        for i in range(6)
+    ])
+    xy_sq = np.sum(xy_deltas ** 2, axis=1)  # shape (6,)
+
+    def residuals(h_vec):
+        h = h_vec[0]
+        # At zero pose: length_i = sqrt(xy_sq_i + h^2)
+        computed = np.sqrt(xy_sq + h ** 2)
+        return computed - initial_lengths
+
+    # Initial guess: use the mean length projected onto the vertical component
+    # h0 ~ sqrt(mean(L^2) - mean(xy_sq)), clamped to be positive
+    h0_sq = np.mean(initial_lengths ** 2) - np.mean(xy_sq)
+    h0 = float(np.sqrt(max(h0_sq, 0.01)))
+
+    result = least_squares(residuals, x0=[h0], bounds=([0.01], [np.inf]))
+
+    if result.cost > 1e-4:
+        print(f"Warning: height fit residual = {result.cost:.2e}. "
+              f"The 6 lengths may be inconsistent with a flat base.")
+
+    h = float(result.x[0])
+    print(f"Solved platform height: h = {h:.4f} m  (fit cost = {result.cost:.2e})")
+
+    base_anchors = np.array([
+        [rb * np.cos(a), rb * np.sin(a), -h] for a in base_angles
+    ])
+
+    platform = StewartPlatform(base_anchors, top_anchors, kp=kp, ki=ki, kd=kd)
+
+    # Sanity check
+    computed_lengths = platform._calculate_ik([0, 0, 0, 0, 0, 0])
+    print(f"Verification — target lengths:   {initial_lengths}")
+    print(f"Verification — IK at zero pose:  {computed_lengths}")
+
+    return platform
 
 
 def plot_platform_response(commands, recorded_poses, dt):
@@ -216,6 +259,121 @@ def plot_lengths(recorded_lengths, dt):
     plt.tight_layout()
     plt.show()    
 
+def plot_accel_velocity(linear_commands: list[float], angular_commands: list[float]):
+    labels_linear = ['ax', 'ay', 'az']
+    labels_angular = ['wx', 'wy', 'wz']
+    colors       = ['tab:blue', 'tab:green', 'tab:red']
+    fig, axes = plt.subplots(2, 3, figsize=(14, 6), sharex=True)
+    fig.suptitle('Body inputs', fontsize=14) 
+
+    dt       = 0.01
+    duration = 30.0
+    N        = int(duration / dt)
+    t        = np.linspace(0,duration, N)
+
+    for i in range(3):
+        # Linear positions (top row)
+        axes[0, i].plot(t, linear_commands[i], color=colors[i], linewidth=0.8)
+        axes[0, i].set_title(labels_linear[i])
+        axes[0, i].set_ylabel('m')
+        axes[0, i].grid(True, alpha=0.3)
+        axes[0, i].axhline(0, color='black', linewidth=0.5, linestyle='--')
+        # Angular velocities (bottom row)
+        axes[1, i].plot(t, angular_commands[i], color=colors[i], linewidth=0.8)
+        axes[1, i].set_title(labels_angular[i])
+        axes[1, i].set_ylabel('rad')
+        axes[1, i].set_xlabel('time (s)')
+        axes[1, i].grid(True, alpha=0.3)
+        axes[1, i].axhline(0, color='black', linewidth=0.5, linestyle='--')
+    plt.tight_layout()
+    plt.show()
+
+def plot_vestibular_comparisom(direct_linear_commands: list[float], direct_angular_commands: list[float],
+                               simulator_linar_commands: list[float], simulator_angular_commands: list[float]):
+    labels_linear = ['ax', 'ay', 'az']
+    labels_angular = ['wx', 'wy', 'wz']
+    colors       = ['tab:blue', 'tab:green', 'tab:red']
+    fig, axes = plt.subplots(2, 3, figsize=(14, 6), sharex=True)
+    fig.suptitle('Body inputs', fontsize=14) 
+
+    dt       = 0.01
+    duration = 30.0
+    N        = int(duration / dt)
+    t        = np.linspace(0,duration, N)
+
+    for i in range(3):
+        # Linear positions (top row)
+        axes[0, i].plot(t, direct_linear_commands[i], color=colors[0], linewidth=0.8)
+        axes[0, i].plot(t, simulator_linar_commands[i], color=colors[1], linewidth=0.8)
+        axes[0, i].set_title(labels_linear[i])
+        axes[0, i].set_ylabel('m')
+        axes[0, i].grid(True, alpha=0.3)
+        axes[0, i].axhline(0, color='black', linewidth=0.5, linestyle='--')
+        # Angular velocities (bottom row)
+        axes[1, i].plot(t, direct_angular_commands[i], color=colors[0], linewidth=0.8)
+        axes[1, i].plot(t, simulator_angular_commands[i], color=colors[1], linewidth=0.8)
+        axes[1, i].set_title(labels_angular[i])
+        axes[1, i].set_ylabel('rad')
+        axes[1, i].set_xlabel('time (s)')
+        axes[1, i].grid(True, alpha=0.3)
+        axes[1, i].axhline(0, color='black', linewidth=0.5, linestyle='--')
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+def compute_platform_kinematics(recorded_poses, dt, person_height=1.0):
+    """
+    Computes linear acceleration and angular velocity of a point
+    'person_height' meters above the top plate center.
+
+    recorded_poses : (6, N)  [x, y, z, roll, pitch, yaw]
+    dt             : sample period (s)
+    person_height  : offset above top plate along its local Z axis (m)
+
+    Returns
+    -------
+    linear_accel : (3, N)  m/s²  — in world frame
+    angular_vel  : (3, N)  rad/s — in world frame
+    """
+    N      = recorded_poses.shape[1]
+    offset = np.array([0.0, 0.0, person_height])
+
+    # ── 1. Build rotation matrices and world-frame position of the person ──
+    positions    = np.zeros((3, N))
+    rot_matrices = []
+
+    for k in range(N):
+        pos = recorded_poses[:3, k]
+        rpy = recorded_poses[3:,  k]
+        Rk  = Rotation.from_euler('xyz', rpy).as_matrix()
+        rot_matrices.append(Rk)
+        positions[:, k] = pos + Rk @ offset        # p_person = p_plate + R·offset
+
+    # ── 2. Linear acceleration — double central-difference ─────────────────
+    velocity     = np.gradient(positions, dt, axis=1)   # (3, N)  m/s
+    linear_accel = np.gradient(velocity,  dt, axis=1)   # (3, N)  m/s²
+
+    # ── 3. Angular velocity from dR/dt · Rᵀ  (skew-symmetric → ω) ─────────
+    # Ω = dR/dt · Rᵀ  is skew-symmetric:  [[0, -ωz, ωy], [ωz, 0, -ωx], [-ωy, ωx, 0]]
+    angular_vel = np.zeros((3, N))
+
+    for k in range(N):
+        if k == 0:
+            dR = (rot_matrices[1]   - rot_matrices[0])   / dt          # forward diff
+        elif k == N - 1:
+            dR = (rot_matrices[N-1] - rot_matrices[N-2]) / dt          # backward diff
+        else:
+            dR = (rot_matrices[k+1] - rot_matrices[k-1]) / (2.0 * dt)  # central diff
+
+        Omega = dR @ rot_matrices[k].T   # skew-symmetric matrix, world frame
+        angular_vel[:, k] = [Omega[2, 1],   # ωx
+                             Omega[0, 2],   # ωy
+                             Omega[1, 0]]   # ωz
+
+    return linear_accel, angular_vel
+
 
 def main():
     gen          = InputGenerator(CONFIG)
@@ -240,7 +398,6 @@ def main():
 
     ### Storage for results
     N = linear_accel.shape[1]
-    print(f"Number of points: {N}")
     recorded_poses = np.zeros((6, N))
     recorded_lengths = np.zeros((6,N))
 
@@ -266,8 +423,32 @@ def main():
     # Post-simulation
     #plot_washout(commands)
     plot_platform_response(commands, recorded_poses, CONFIG["dt"])
-
     plot_lengths(recorded_lengths, CONFIG["dt"])
+
+    linear_accel_world, angular_vel_world = compute_platform_kinematics(recorded_poses, CONFIG["dt"], person_height=1.0)
+    # Project into body frame at each timestep
+    N = recorded_poses.shape[1]
+    linear_accel_body = np.zeros((3, N))
+    angular_vel_body  = np.zeros((3, N))
+    g_world = np.array([0.0, 0.0, 9.81])
+
+    for k in range(N):
+        rpy = recorded_poses[3:, k]
+        R   = Rotation.from_euler('xyz', rpy).as_matrix()
+        g_body = R.T @ g_world
+        linear_accel_body[:, k] = R.T @ linear_accel_world[:, k] - g_body
+        angular_vel_body[:, k]  = R.T @ angular_vel_world[:, k]
+
+    plot_accel_velocity(linear_accel_body, angular_vel_body)
+
+
+    ##### Vestibular system
+    vestibular_system = VestibularSystem(CONFIG["dt"])
+
+    sim_linear_accel_vestibular, sim_angular_vel_vestibular = vestibular_system._vestibular_output(linear_accel_body, angular_vel_body)
+    linear_accel_vestibular, angular_vel_vestibular = vestibular_system._vestibular_output(linear_accel, angular_vel)
+
+    plot_vestibular_comparisom(linear_accel_vestibular, angular_vel_vestibular, sim_linear_accel_vestibular, sim_angular_vel_vestibular)
 
 if __name__ == "__main__":
     main()
