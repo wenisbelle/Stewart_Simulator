@@ -439,6 +439,15 @@ def main():
         linear_accel_body[:, k] = R.T @ linear_accel_world[:, k] - g_body
         angular_vel_body[:, k]  = R.T @ angular_vel_world[:, k]
 
+    input_linear_accel_body = np.zeros((3, N))
+    input_angular_vel_body = np.zeros((3, N))
+    for k in range(N):
+        rpy = recorded_poses[3:, k]
+        R = Rotation.from_euler('xyz', rpy).as_matrix()
+        g_body = R.T @ g_world
+        input_linear_accel_body[:, k] = R.T @ linear_accel[:, k] - g_body
+        input_angular_vel_body[:, k]  = R.T @ angular_vel[:, k]
+
     plot_accel_velocity(linear_accel_body, angular_vel_body)
 
 
